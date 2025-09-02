@@ -1,2 +1,1 @@
-# SEproj1a1
-CSC 510 Project 1a1
+# NCSU 2025 Fall CSC 510: Software Engineering 
