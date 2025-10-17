@@ -1,27 +1,37 @@
 import asyncio
+import json
 import logging
 import os
 import uuid
 from functools import lru_cache
-from typing import AsyncGenerator, Iterable
+from typing import AsyncGenerator, Iterable, Optional
 
+import httpx
 from vllm import AsyncLLMEngine, EngineArgs, SamplingParams
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = os.getenv("VLLM_MODEL", "facebook/opt-125m")
+DEFAULT_MODEL = os.getenv("VLLM_MODEL", "Qwen/Qwen3-8B-Instruct")
 DEFAULT_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", "512"))
 DEFAULT_TEMPERATURE = float(os.getenv("VLLM_TEMPERATURE", "0.7"))
+SERVE_URL = os.getenv("VLLM_SERVE_URL", "").rstrip("/")
+SERVE_MODEL = os.getenv("VLLM_SERVE_MODEL", DEFAULT_MODEL)
+SERVE_API_KEY = os.getenv("VLLM_API_KEY")
+
 _stop_env = os.getenv("VLLM_STOP")
 if _stop_env:
     STOP_SEQUENCES: Iterable[str] = tuple(s.strip() for s in _stop_env.split(",") if s.strip())
 else:
     STOP_SEQUENCES = ("\nUser:", "\nSystem:")
 
+USE_REMOTE_SERVE = bool(SERVE_URL)
+
 
 @lru_cache()
 def get_engine() -> AsyncLLMEngine:
-    """Create (or fetch cached) vLLM engine instance."""
+    if USE_REMOTE_SERVE:
+        raise RuntimeError("Local engine is disabled when VLLM_SERVE_URL is provided.")
+
     model = DEFAULT_MODEL
     if not model:
         raise RuntimeError("VLLM_MODEL environment variable must be set")
@@ -37,8 +47,117 @@ def get_engine() -> AsyncLLMEngine:
     return AsyncLLMEngine.from_engine_args(engine_args)
 
 
-def build_prompt(messages: Iterable[dict], persona: str | None = None) -> str:
-    """Convert chat-style messages to a single text prompt."""
+def sampling_params_from_request(
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> SamplingParams:
+    return SamplingParams(
+        max_tokens=max_tokens or DEFAULT_MAX_TOKENS,
+        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+        stop=STOP_SEQUENCES,
+    )
+
+
+async def _remote_stream_generate(
+    messages: Iterable[dict],
+    sampling_params: SamplingParams,
+    persona: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
+    if not SERVE_URL:
+        raise RuntimeError("VLLM_SERVE_URL must be set to use remote vllm serve mode.")
+
+    url = f"{SERVE_URL}/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if SERVE_API_KEY:
+        headers["Authorization"] = f"Bearer {SERVE_API_KEY}"
+
+    request_body = {
+        "model": SERVE_MODEL,
+        "messages": list(messages),
+        "stream": True,
+        "max_tokens": sampling_params.max_tokens,
+        "temperature": sampling_params.temperature,
+    }
+    if STOP_SEQUENCES:
+        request_body["stop"] = list(STOP_SEQUENCES)
+    if persona:
+        request_body.setdefault("metadata", {})["persona"] = persona
+
+    async with httpx.AsyncClient(timeout=None) as client:
+        async with client.stream("POST", url, headers=headers, json=request_body) as response:
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                text = await response.aread()
+                logger.error("vLLM serve returned error %s: %s", exc.response.status_code, text)
+                raise
+
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    logger.warning("Failed to decode streaming payload: %s", data)
+                    continue
+                choices = payload.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                text_delta = delta.get("content")
+                if text_delta:
+                    yield text_delta
+
+
+async def _remote_complete(
+    messages: Iterable[dict],
+    sampling_params: SamplingParams,
+    persona: Optional[str] = None,
+) -> str:
+    if not SERVE_URL:
+        raise RuntimeError("VLLM_SERVE_URL must be set to use remote vllm serve mode.")
+
+    url = f"{SERVE_URL}/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if SERVE_API_KEY:
+        headers["Authorization"] = f"Bearer {SERVE_API_KEY}"
+
+    request_body = {
+        "model": SERVE_MODEL,
+        "messages": list(messages),
+        "stream": False,
+        "max_tokens": sampling_params.max_tokens,
+        "temperature": sampling_params.temperature,
+    }
+    if STOP_SEQUENCES:
+        request_body["stop"] = list(STOP_SEQUENCES)
+    if persona:
+        request_body.setdefault("metadata", {})["persona"] = persona
+
+    async with httpx.AsyncClient(timeout=None) as client:
+        response = await client.post(url, headers=headers, json=request_body)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("vLLM serve returned error %s: %s", exc.response.status_code, response.text)
+            raise
+
+    payload = response.json()
+    text_chunks: list[str] = []
+    for choice in payload.get("choices", []):
+        message = choice.get("message", {})
+        content = message.get("content")
+        if content:
+            text_chunks.append(content)
+    return "".join(text_chunks)
+
+
+def build_prompt(messages: Iterable[dict], persona: Optional[str] = None) -> str:
     role_labels = {
         "system": "System",
         "user": "User",
@@ -61,23 +180,11 @@ def build_prompt(messages: Iterable[dict], persona: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def sampling_params_from_request(
-    max_tokens: int | None = None,
-    temperature: float | None = None,
-) -> SamplingParams:
-    return SamplingParams(
-        max_tokens=max_tokens or DEFAULT_MAX_TOKENS,
-        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-        stop=STOP_SEQUENCES,
-    )
-
-
-async def stream_generate(
+async def _local_stream_generate(
     messages: Iterable[dict],
     sampling_params: SamplingParams,
-    persona: str | None = None,
+    persona: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
-    """Yield completion text chunks for the given conversation."""
     engine = get_engine()
     prompt = build_prompt(messages, persona=persona)
     request_id = str(uuid.uuid4())
@@ -109,13 +216,37 @@ async def stream_generate(
         raise
 
 
+async def _local_complete(
+    messages: Iterable[dict],
+    sampling_params: SamplingParams,
+    persona: Optional[str] = None,
+) -> str:
+    chunks: list[str] = []
+    async for chunk in _local_stream_generate(messages, sampling_params, persona=persona):
+        chunks.append(chunk)
+    return "".join(chunks)
+
+
+async def stream_generate(
+    messages: Iterable[dict],
+    sampling_params: SamplingParams,
+    persona: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
+    if USE_REMOTE_SERVE:
+        async for item in _remote_stream_generate(messages, sampling_params, persona=persona):
+            yield item
+        return
+
+    async for item in _local_stream_generate(messages, sampling_params, persona=persona):
+        yield item
+
+
 async def complete(
     messages: Iterable[dict],
     sampling_params: SamplingParams,
-    persona: str | None = None,
+    persona: Optional[str] = None,
 ) -> str:
-    """Return a full completion string without streaming."""
-    chunks: list[str] = []
-    async for chunk in stream_generate(messages, sampling_params, persona=persona):
-        chunks.append(chunk)
-    return "".join(chunks)
+    if USE_REMOTE_SERVE:
+        return await _remote_complete(messages, sampling_params, persona=persona)
+
+    return await _local_complete(messages, sampling_params, persona=persona)

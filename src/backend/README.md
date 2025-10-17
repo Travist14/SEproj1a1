@@ -11,9 +11,9 @@ This folder hosts a FastAPI application that wraps a [vLLM](https://github.com/v
    ```bash
    pip install -r backend/requirements.txt
    ```
-2. Export the model you want vLLM to load (defaults to `facebook/opt-125m`):
+2. Export the model you want vLLM to load (defaults to `Qwen/Qwen3-8B-Instruct`):
    ```bash
-   export VLLM_MODEL=meta-llama/Llama-3-8B-Instruct
+   export VLLM_MODEL=Qwen/Qwen3-8B-Instruct
    ```
 3. Launch the server with uvicorn:
    ```bash
@@ -21,6 +21,23 @@ This folder hosts a FastAPI application that wraps a [vLLM](https://github.com/v
    ```
 
 The frontend is already configured to proxy `/api/*` calls to `http://localhost:8000` when you run `npm run dev` (Vite).
+
+## Using `vllm serve` with Qwen3-8B
+
+If you prefer to run the official vLLM OpenAI-compatible server, start it in a separate terminal:
+
+```bash
+vllm serve Qwen/Qwen3-8B-Instruct --host 0.0.0.0 --port 8001
+```
+
+Then point this backend at the running instance:
+
+```bash
+export VLLM_SERVE_URL=http://127.0.0.1:8001
+uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+```
+
+When `VLLM_SERVE_URL` is set, the FastAPI wrapper forwards requests to `vllm serve`, preserving streaming and persona metadata, so the frontend continues to work unchanged.
 
 ## Configuration
 
