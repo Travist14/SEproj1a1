@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -36,13 +37,37 @@ def get_engine() -> AsyncLLMEngine:
     if not model:
         raise RuntimeError("VLLM_MODEL environment variable must be set")
 
-    engine_args = EngineArgs(
+    disable_log_requests_env = os.getenv("VLLM_DISABLE_LOG_REQUESTS", "").strip().lower()
+    disable_log_requests = disable_log_requests_env in {"1", "true", "yes", "on"}
+
+    engine_args_kwargs = dict(
         model=model,
         tensor_parallel_size=int(os.getenv("VLLM_TENSOR_PARALLEL_SIZE", "1")),
         pipeline_parallel_size=int(os.getenv("VLLM_PIPELINE_PARALLEL_SIZE", "1")),
         dtype=os.getenv("VLLM_DTYPE", "auto"),
         download_dir=os.getenv("VLLM_DOWNLOAD_DIR"),
     )
+
+    try:
+        signature = inspect.signature(EngineArgs)
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature and "disable_log_requests" in signature.parameters:
+        engine_args_kwargs["disable_log_requests"] = disable_log_requests
+
+    engine_args = EngineArgs(**engine_args_kwargs)
+
+    if not hasattr(engine_args, "disable_log_requests"):
+        # Older vLLM versions do not set the attribute but the async engine expects it.
+        try:
+            setattr(engine_args, "disable_log_requests", disable_log_requests)
+        except AttributeError:
+            try:
+                object.__setattr__(engine_args, "disable_log_requests", disable_log_requests)
+            except Exception:
+                logger.debug("Unable to set disable_log_requests on EngineArgs", exc_info=True)
+
     logger.info("Loading vLLM engine for model %s", model)
     return AsyncLLMEngine.from_engine_args(engine_args)
 
