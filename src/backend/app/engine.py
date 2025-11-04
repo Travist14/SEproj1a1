@@ -11,7 +11,7 @@ from vllm import AsyncLLMEngine, EngineArgs, SamplingParams
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = os.getenv("VLLM_MODEL", "Qwen/Qwen3-8B-Instruct")
+DEFAULT_MODEL = os.getenv("VLLM_MODEL", "llama3.1-8b-instruct")
 DEFAULT_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", "512"))
 DEFAULT_TEMPERATURE = float(os.getenv("VLLM_TEMPERATURE", "0.7"))
 SERVE_URL = os.getenv("VLLM_SERVE_URL", "").rstrip("/")

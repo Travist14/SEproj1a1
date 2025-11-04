@@ -29,7 +29,7 @@ export default function App() {
   return (
     <div className={`app-shell app-shell-${activePersona.key}`}>
       <header className="app-header">
-        <h1>vLLM Chat Playground</h1>
+        <h1>MARC</h1>
         <div className="header-actions">
           <div className={`persona-badge persona-${activePersona.key}`}>{activePersona.label}</div>
           <button type="button" onClick={handleReset} className="secondary">
