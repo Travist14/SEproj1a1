@@ -28,6 +28,7 @@ else:
 LOGGER = logging.getLogger(__name__)
 
 MODEL_ENV_VAR = "VLLM_MODEL"
+DEFAULT_MODEL_ID = "Qwen/Qwen3-4B"
 DEFAULT_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", "512"))
 DEFAULT_TOP_P = float(os.getenv("VLLM_TOP_P", "0.95"))
 DEFAULT_TEMPERATURE = float(os.getenv("VLLM_TEMPERATURE", "0.7"))
@@ -95,9 +96,14 @@ class EngineManager:
             if self._engine is not None:
                 return self._engine
 
-            model_id = os.getenv(MODEL_ENV_VAR)
-            if not model_id:
-                raise RuntimeError(f"Environment variable {MODEL_ENV_VAR} must be set to a valid model.")
+            env_model_id = os.getenv(MODEL_ENV_VAR)
+            model_id = env_model_id or DEFAULT_MODEL_ID
+            if not env_model_id:
+                LOGGER.info(
+                    "Environment variable %s not set; defaulting to '%s'",
+                    MODEL_ENV_VAR,
+                    DEFAULT_MODEL_ID,
+                )
 
             engine_args = AsyncEngineArgs(
                 model=model_id,
