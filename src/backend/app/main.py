@@ -162,7 +162,8 @@ from vllm.sampling_params import SamplingParams
 app = FastAPI(title="Llama 3.1 8B Instruct API", version="0.1.0")
 
 # ----- CONFIG -----
-MODEL_NAME = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # name of model that we are using, this expects a huggingface repo name
+#MODEL_NAME = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # name of model that we are using, this expects a huggingface repo name
+MODEL_NAME = "Qwen/Qwen3-4B"
 TENSOR_PARALLEL_SIZE = 1  # adjust based on gpu memory 
 gpu_memory_utilization = 0.9  
 
