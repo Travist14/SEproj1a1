@@ -151,10 +151,9 @@
 
 import json
 import uuid
-from typing import AsyncGenerator, List, Optional
+from typing import List
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from vllm import AsyncEngineArgs, AsyncLLMEngine
@@ -190,7 +189,7 @@ class ChatRequest(BaseModel):
     max_tokens: int = 512
     temperature: float = 0.7
     top_p: float = 0.9
-    stream: bool = True
+    stream: bool = False
 
 
 # ----- HELPER: CONVERT CHAT MESSAGES TO PROMPT -----
@@ -219,40 +218,6 @@ def messages_to_prompt(messages: List[ChatMessage]) -> str:
     return "".join(parts)
 
 
-# ----- STREAMING GENERATOR -----
-async def stream_completion(
-    prompt: str,
-    sampling_params: SamplingParams,
-) -> AsyncGenerator[bytes, None]:
-    """
-    Streams chunks as simple JSON lines (you can adapt to SSE easily).
-    Each yield is a line of JSON containing the new text delta.
-    """
-    request_id = str(uuid.uuid4())
-    print(f"[backend] Streaming LLM response for request {request_id}.")
-    # submit request
-    results_generator = engine.generate(prompt, sampling_params, request_id=request_id)
-
-    full_text = ""
-    async for request_output in results_generator:
-        # request_output is vllm.outputs.RequestOutput
-        # it can contain multiple outputs, but we asked for 1
-        output = request_output.outputs[0]
-        # output.text is the full text so far; delta is last token(s)
-        # vLLM exposes token_ids, logprobs, etc.
-        current_text = output.text[len(prompt):]
-        delta_text = current_text[len(full_text):]
-        if not delta_text:
-            continue
-        full_text = current_text
-        chunk = json.dumps({"id": request_id, "text": delta_text})
-        yield (f"data: {chunk}\n\n").encode("utf-8")
-
-    print(f"[backend] Completed streaming response for request {request_id}: {full_text}")
-    # final message
-    yield b"data: [DONE]\n\n"
-
-
 # ----- ROUTES -----
 @app.post("/generate")
 @app.post("/api/generate")
@@ -272,23 +237,15 @@ async def generate(req: ChatRequest):
         stop=["</s>"],
     )
 
-    if req.stream:
-        print("[backend] Streaming response requested.")
-        return StreamingResponse(
-            stream_completion(prompt, sampling_params),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache"},
-        )
-    else:
-        # non-streaming path
-        request_id = str(uuid.uuid4())
-        print(f"[backend] Submitting non-streaming request {request_id} to LLM.")
-        results = await engine.generate(prompt, sampling_params, request_id=request_id)
-        if not results:
-            raise HTTPException(status_code=500, detail="No response from model")
-        output = results[0].outputs[0].text
-        print(f"[backend] Completed non-streaming response for request {request_id}: {output}")
-        return {"id": request_id, "output": output}
+    # non-streaming path (only mode supported)
+    request_id = str(uuid.uuid4())
+    print(f"[backend] Submitting request {request_id} to LLM.")
+    results = await engine.generate(prompt, sampling_params, request_id=request_id)
+    if not results:
+        raise HTTPException(status_code=500, detail="No response from model")
+    output = results[0].outputs[0].text
+    print(f"[backend] Completed response for request {request_id}: {output}")
+    return {"id": request_id, "output": output}
 
 
 @app.get("/health")
