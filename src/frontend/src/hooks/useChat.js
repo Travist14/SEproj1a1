@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { generateCompletion } from '../api/client';
+import { streamCompletion } from '../api/client';
 import { getPersonaConfig } from '../config/personas';
 
 function systemMessageForPersona(personaKey) {
@@ -42,7 +42,7 @@ export function useChat(personaKey = 'developer') {
       }
 
       const userMessage = createMessage('user', content);
-      const assistantMessage = createMessage('assistant', 'Thinking...', { pending: true });
+      const assistantMessage = createMessage('assistant', '', { pending: true });
 
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
       setStatus('pending');
@@ -50,18 +50,40 @@ export function useChat(personaKey = 'developer') {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      let accumulated = '';
+      let receivedToken = false;
+
       try {
         const apiMessages = messages
           .filter((msg) => !msg.pending)
           .map((msg) => ({ role: msg.role, content: msg.content }))
           .concat({ role: 'user', content });
 
-        const completion = await generateCompletion(apiMessages, {
+        for await (const event of streamCompletion(apiMessages, {
           signal: controller.signal,
           persona: personaRef.current
-        });
-        const normalized = (completion ?? '').trim();
-        console.debug('[chat] Assistant response:', normalized);
+        })) {
+          if (event.type === 'token') {
+            receivedToken = true;
+            accumulated += event.delta ?? '';
+            console.debug('[chat] Token chunk:', event.delta ?? '');
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMessage.id
+                  ? {
+                      ...msg,
+                      content: accumulated,
+                      pending: true
+                    }
+                  : msg
+              )
+            );
+          } else if (event.type === 'done' && !receivedToken) {
+            accumulated = event.content ?? '';
+          }
+        }
+
+        const normalized = (accumulated ?? '').trim();
 
         setMessages((prev) =>
           prev.map((msg) =>
@@ -77,6 +99,19 @@ export function useChat(personaKey = 'developer') {
         setStatus('idle');
       } catch (error) {
         if (error.name === 'AbortError') {
+          const normalized = (accumulated ?? '').trim();
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMessage.id
+                ? {
+                    ...msg,
+                    content: normalized || 'Generation cancelled.',
+                    pending: false,
+                    cancelled: true
+                  }
+                : msg
+            )
+          );
           setStatus('idle');
         } else {
           setStatus('error');
@@ -85,7 +120,8 @@ export function useChat(personaKey = 'developer') {
               msg.id === assistantMessage.id
                 ? {
                     ...msg,
-                    content: msg.content || 'Something went wrong. Please try again.',
+                    content:
+                      (accumulated ?? '').trim() || msg.content || 'Something went wrong. Please try again.',
                     pending: false,
                     error: error.message
                   }
