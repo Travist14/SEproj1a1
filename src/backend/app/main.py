@@ -162,7 +162,8 @@ from vllm.sampling_params import SamplingParams
 app = FastAPI(title="Llama 3.1 8B Instruct API", version="0.1.0")
 
 # ----- CONFIG -----
-MODEL_NAME = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # name of model that we are using, this expects a huggingface repo name
+#MODEL_NAME = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # name of model that we are using, this expects a huggingface repo name
+MODEL_NAME = "Qwen/Qwen3-4B"
 TENSOR_PARALLEL_SIZE = 1  # adjust based on gpu memory 
 gpu_memory_utilization = 0.9  
 
@@ -172,6 +173,7 @@ engine_args = AsyncEngineArgs(
     trust_remote_code=True,
     tensor_parallel_size=TENSOR_PARALLEL_SIZE,
     gpu_memory_utilization=gpu_memory_utilization,
+    max_model_len=8192,  # allow up to 8K token sequences
 )
 engine: AsyncLLMEngine = AsyncLLMEngine.from_engine_args(engine_args)
 
@@ -274,4 +276,3 @@ async def generate(req: ChatRequest):
             raise HTTPException(status_code=500, detail="No response from model")
         output = results[0].outputs[0].text
         return {"id": request_id, "output": output}
-
