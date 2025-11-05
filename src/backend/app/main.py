@@ -253,6 +253,7 @@ async def stream_completion(
 
 # ----- ROUTES -----
 @app.post("/generate")
+@app.post("/api/generate")
 async def generate(req: ChatRequest):
     prompt = messages_to_prompt(req.messages)
 
@@ -276,3 +277,10 @@ async def generate(req: ChatRequest):
             raise HTTPException(status_code=500, detail="No response from model")
         output = results[0].outputs[0].text
         return {"id": request_id, "output": output}
+
+
+@app.get("/health")
+@app.get("/api/health")
+async def health() -> dict:
+    """Basic readiness probe for the frontend."""
+    return {"status": "ok", "model": MODEL_NAME}
