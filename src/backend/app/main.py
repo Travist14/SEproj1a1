@@ -1,92 +1,147 @@
-from __future__ import annotations
-
-import logging
-from typing import AsyncGenerator, List, Optional
+import asyncio
+import os
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from vllm import LLM, SamplingParams
 
-from .engine import complete, sampling_params_from_request, stream_generate
+DEFAULT_MODEL = os.getenv(
+    "VLLM_MODEL_NAME", "meta-llama/Meta-Llama-3.1-8B-Instruct"
+)
+DEFAULT_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", 8192))
+ALLOW_ORIGINS = tuple(
+    origin.strip()
+    for origin in os.getenv("BACKEND_ALLOW_ORIGINS", "*").split(",")
+    if origin.strip()
+)
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
-
-app = FastAPI(title="vLLM Inference Server", version="0.1.0")
+app = FastAPI(
+    title="SEproj1a1 vLLM Backend",
+    version="1.0.0",
+    description="FastAPI server that wraps a local vLLM inference engine.",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(ALLOW_ORIGINS) or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-class ChatMessage(BaseModel):
-    role: str = Field(..., description="Chat role such as system, user, assistant")
-    content: str = Field(..., description="Message content")
-
-
 class GenerateRequest(BaseModel):
-    messages: List[ChatMessage] = Field(..., description="Conversation history")
-    stream: bool = Field(False, description="Enable server-sent events streaming")
-    max_tokens: Optional[int] = Field(None, ge=1, le=4096)
-    temperature: Optional[float] = Field(None, ge=0)
-    persona: Optional[str] = Field(None, description="Persona identifier from the frontend")
-
-
-@app.get("/api/health")
-async def health() -> JSONResponse:
-    return JSONResponse({"status": "ok"})
-
-
-def _validate_messages(messages: List[ChatMessage]) -> None:
-    if not messages:
-        raise HTTPException(status_code=400, detail="messages must not be empty")
-
-
-@app.post("/api/generate")
-async def generate(payload: GenerateRequest):
-    _validate_messages(payload.messages)
-    sampling_params = sampling_params_from_request(
-        max_tokens=payload.max_tokens,
-        temperature=payload.temperature,
+    prompt: str = Field(..., min_length=1, description="User prompt to send to the model.")
+    max_tokens: int = Field(
+        DEFAULT_MAX_TOKENS,
+        gt=0,
+        le=4096,
+        description="Number of tokens to generate in the completion.",
+    )
+    temperature: float = Field(
+        0.7,
+        ge=0.0,
+        le=2.0,
+        description="Sampling temperature.",
+    )
+    top_p: float = Field(
+        0.95,
+        ge=0.0,
+        le=1.0,
+        description="Top-p nucleus sampling parameter.",
+    )
+    stop: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of stop strings.",
     )
 
-    message_dicts = [message.dict() for message in payload.messages]
 
-    if payload.stream:
-        async def event_publisher() -> AsyncGenerator[bytes, None]:
-            try:
-                async for chunk in stream_generate(
-                    message_dicts, sampling_params, persona=payload.persona
-                ):
-                    for line in chunk.replace("\r", "").split("\n"):
-                        if not line:
-                            continue
-                        yield f"data: {line}\n\n".encode()
-                yield b"data: [DONE]\n\n"
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.exception("Streaming generation failed")
-                yield f"data: ERROR: {exc}\n\n".encode()
+class GenerateResponse(BaseModel):
+    text: str
+    model: str
 
-        return StreamingResponse(event_publisher(), media_type="text/event-stream")
+
+class HealthResponse(BaseModel):
+    status: str
+    model: str
+
+
+_llm: Optional[LLM] = None
+_load_lock = asyncio.Lock()
+
+
+async def _load_model() -> LLM:
+    """Ensure the global LLM instance is created only once."""
+    global _llm
+    if _llm is None:
+        async with _load_lock:
+            if _llm is None:
+                tensor_parallel = os.getenv("VLLM_TENSOR_PARALLEL_SIZE")
+                kwargs = {}
+                if tensor_parallel:
+                    try:
+                        kwargs["tensor_parallel_size"] = int(tensor_parallel)
+                    except ValueError:
+                        raise RuntimeError(
+                            "VLLM_TENSOR_PARALLEL_SIZE must be an integer."
+                        )
+
+                trust_remote_code = os.getenv("VLLM_TRUST_REMOTE_CODE", "false").lower()
+                if trust_remote_code in {"true", "1", "yes"}:
+                    kwargs["trust_remote_code"] = True
+
+                # Load the model off the event loop thread to avoid blocking uvicorn.
+                _llm = await asyncio.to_thread(LLM, model=DEFAULT_MODEL, **kwargs)
+    return _llm
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    await _load_model()
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check() -> HealthResponse:
+    model_name = DEFAULT_MODEL if _llm is None else _llm.llm_engine.model_config.model
+    return HealthResponse(status="ok", model=model_name)
+
+
+@app.post("/generate", response_model=GenerateResponse)
+async def generate_text(request: GenerateRequest) -> GenerateResponse:
+    llm = await _load_model()
+    sampling_params = SamplingParams(
+        temperature=request.temperature,
+        top_p=request.top_p,
+        max_tokens=request.max_tokens,
+        stop=request.stop,
+    )
 
     try:
-        text = await complete(
-            message_dicts,
-            sampling_params,
-            persona=payload.persona,
+        outputs = await asyncio.to_thread(
+            llm.generate,
+            [request.prompt],
+            sampling_params=sampling_params,
         )
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.exception("Generation request failed")
+    except Exception as exc:  # pragma: no cover - surface runtime issues
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return {"output": text}
+    if not outputs or not outputs[0].outputs:
+        raise HTTPException(status_code=500, detail="No text generated by the model.")
+
+    completion_text = outputs[0].outputs[0].text
+    model_name = llm.llm_engine.model_config.model
+    return GenerateResponse(text=completion_text, model=model_name)
 
 
 @app.get("/")
-async def root():
-    return {"message": "vLLM backend is running"}
+async def root() -> dict:
+    return {
+        "message": "vLLM inference server is running.",
+        "model": DEFAULT_MODEL,
+        "endpoints": {
+            "health": "/health",
+            "generate": "/generate",
+        },
+    }
