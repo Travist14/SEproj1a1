@@ -224,6 +224,7 @@ async def health() -> JSONResponse:
 
 
 @app.post("/generate")
+@app.post("/api/generate")
 async def generate(payload: GenerateRequest):
     """Generate a chat completion, optionally streaming tokens."""
     try:
