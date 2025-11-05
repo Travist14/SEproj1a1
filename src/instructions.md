@@ -8,6 +8,8 @@ This document walks through installing and running both the FastAPI/vLLM backend
 - Node.js 18+ (Vite works best on an active LTS release) and `npm`.
 - GPU with CUDA support is recommended for vLLM; CPU mode works but is slower and more memory intensive.
 - Access to the `Qwen/Qwen3-4B` weights if your hosting provider gates downloads.
+- If on ARC write export HF_HOME='/mnt/beegfs/'
+
 
 ## Backend (FastAPI + vLLM)
 
@@ -52,6 +54,17 @@ This document walks through installing and running both the FastAPI/vLLM backend
 
 1. Start the backend (`uvicorn ...`) so the API is available.
 2. Start the frontend (`npm run dev`) for live reloading during development.
+3. If on ARC, open two terminals from local device. Write the following:
+
+`ssh -L 8001:c"yourarcnodehere".localdomai:8001 "yourUsername"@c"yourarcnodehere"` in the first terminal
+`ssh -L 5173:c"yourarcnodehere".local:5173 "yourUsername"@c"yourarcnodehere"` in the second terminal
+
+depending on your set up the following may be more appropriate
+
+`ssh -X -i .ssh/"yourUsername" -L 8001:c"yourarcnodehere":8001 "yourUsername"@arc.csc.ncsu.edu`
+`ssh -X -i .ssh/"yourUsername" -L 8001:c"yourarcnodehere":8001 "yourUsername"@arc.csc.ncsu.edu`
+
+
 3. When finished, stop each server with `CTRL+C` in its terminal. Deactivate the Python virtual environment with `deactivate` if desired.
 
 With both services running, you can develop or test the full stack end-to-end. Adjust environment variables or Vite configuration files as needed for your deployment targets.
