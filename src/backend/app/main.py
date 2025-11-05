@@ -150,7 +150,7 @@
 
 
 import uuid
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, Awaitable, Callable, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -158,6 +158,8 @@ from pydantic import BaseModel
 
 from vllm import AsyncEngineArgs, AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
+
+from .chat_store import get_logger
 
 app = FastAPI(title="Llama 3.1 8B Instruct API", version="0.1.0")
 
@@ -176,6 +178,7 @@ engine_args = AsyncEngineArgs(
     max_model_len=8192,  # allow up to 8K token sequences
 )
 engine: AsyncLLMEngine = AsyncLLMEngine.from_engine_args(engine_args)
+chat_logger = get_logger()
 
 
 # ----- REQUEST / RESPONSE SCHEMAS -----
@@ -190,6 +193,7 @@ class ChatRequest(BaseModel):
     temperature: float = 0.7
     top_p: float = 0.9
     stream: bool = True
+    persona: Optional[str] = None
 
 
 # ----- HELPER: CONVERT CHAT MESSAGES TO PROMPT -----
@@ -222,39 +226,60 @@ def messages_to_prompt(messages: List[ChatMessage]) -> str:
 async def stream_completion(
     prompt: str,
     sampling_params: SamplingParams,
+    *,
+    request_id: str,
+    on_complete: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> AsyncGenerator[bytes, None]:
     """
     Streams chunks as simple JSON lines (you can adapt to SSE easily).
     Each yield is a line of JSON containing the new text delta.
     """
-    request_id = str(uuid.uuid4())
-    # submit request
     results_generator = engine.generate(prompt, sampling_params, request_id=request_id)
 
-    async for request_output in results_generator:
-        # request_output is vllm.outputs.RequestOutput
-        # it can contain multiple outputs, but we asked for 1
-        output = request_output.outputs[0]
-        # output.text is the full text so far; delta is last token(s)
-        # vLLM exposes token_ids, logprobs, etc.
-        delta_text = output.text[len(prompt):]
-        chunk = {
-            "id": request_id,
-            "event": "token",
-            "text": delta_text,
-            "finished": request_output.finished,
-        }
-        yield (f"{chunk}\n").encode("utf-8")
+    accumulated = ""
+    try:
+        async for request_output in results_generator:
+            output = request_output.outputs[0]
+            full_text = output.text[len(prompt):]
+            delta = full_text[len(accumulated):] if full_text.startswith(accumulated) else full_text
+            accumulated = full_text
+            if delta:
+                chunk = {
+                    "id": request_id,
+                    "event": "token",
+                    "text": delta,
+                    "finished": request_output.finished,
+                }
+                yield (f"{chunk}\n").encode("utf-8")
 
-    # final message
-    done_chunk = {"id": request_id, "event": "end", "finished": True}
-    yield (f"{done_chunk}\n").encode("utf-8")
+        done_chunk = {"id": request_id, "event": "end", "finished": True}
+        yield (f"{done_chunk}\n").encode("utf-8")
+    finally:
+        if on_complete:
+            try:
+                await on_complete(accumulated)
+            except Exception:
+                # Logging must not break the response stream.
+                pass
 
 
 # ----- ROUTES -----
 @app.post("/generate")
 @app.post("/api/generate")
 async def generate(req: ChatRequest):
+    if not req.messages:
+        raise HTTPException(status_code=400, detail="Messages list must not be empty.")
+
+    conversation_payload = [msg.model_dump() for msg in req.messages]
+    user_message = next(
+        (msg for msg in reversed(conversation_payload) if msg.get("role") == "user"),
+        None,
+    )
+    if user_message is None:
+        raise HTTPException(
+            status_code=400, detail="A user message is required to generate a response."
+        )
+
     prompt = messages_to_prompt(req.messages)
 
     sampling_params = SamplingParams(
@@ -263,20 +288,58 @@ async def generate(req: ChatRequest):
         top_p=req.top_p,
         stop=["</s>"],
     )
+    metadata = {
+        "max_tokens": req.max_tokens,
+        "temperature": req.temperature,
+        "top_p": req.top_p,
+        "stream": req.stream,
+    }
+    request_id = str(uuid.uuid4())
 
     if req.stream:
+        async def finalize(response_text: str) -> None:
+            assistant_message = {"role": "assistant", "content": response_text}
+            try:
+                await chat_logger.log(
+                    request_id=request_id,
+                    persona=req.persona,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                    conversation=conversation_payload + [assistant_message],
+                    metadata=metadata,
+                )
+            except Exception:
+                # Logging failures should not break the API response path.
+                pass
+
         return StreamingResponse(
-            stream_completion(prompt, sampling_params),
+            stream_completion(
+                prompt,
+                sampling_params,
+                request_id=request_id,
+                on_complete=finalize,
+            ),
             media_type="text/plain",
         )
     else:
-        # non-streaming path
-        request_id = str(uuid.uuid4())
         results = await engine.generate(prompt, sampling_params, request_id=request_id)
         if not results:
             raise HTTPException(status_code=500, detail="No response from model")
-        output = results[0].outputs[0].text
-        return {"id": request_id, "output": output}
+        raw_output = results[0].outputs[0].text
+        completion = raw_output[len(prompt):] if raw_output.startswith(prompt) else raw_output
+        assistant_message = {"role": "assistant", "content": completion}
+        try:
+            await chat_logger.log(
+                request_id=request_id,
+                persona=req.persona,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                conversation=conversation_payload + [assistant_message],
+                metadata=metadata,
+            )
+        except Exception:
+            pass
+        return {"id": request_id, "output": completion}
 
 
 @app.get("/health")

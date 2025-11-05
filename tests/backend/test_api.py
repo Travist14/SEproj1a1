@@ -1,6 +1,8 @@
 """
 Unit tests for MARC backend API endpoints.
 """
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -10,7 +12,9 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src" / "backend"))
 
+import app.main as app_main
 from app.main import app
+from app.chat_store import ChatLogger
 
 
 @pytest.fixture
@@ -154,3 +158,90 @@ def test_cors_headers(client):
 
     # CORS should allow all origins
     assert "access-control-allow-origin" in response.headers
+
+
+@pytest.mark.unit
+def test_generate_logs_messages_with_persona(tmp_path, client, monkeypatch):
+    """Ensure non-streaming responses are persisted with persona metadata."""
+    log_path = tmp_path / "chat.jsonl"
+    monkeypatch.setattr(app_main, "chat_logger", ChatLogger(log_path))
+
+    async def fake_generate(prompt, sampling_params, request_id):
+        output = MagicMock()
+        output.outputs = [MagicMock(text=f"{prompt}Assistant reply")]
+        return [output]
+
+    monkeypatch.setattr(
+        app_main.engine,
+        "generate",
+        AsyncMock(side_effect=fake_generate),
+    )
+
+    payload = {
+        "messages": [{"role": "user", "content": "Hello there"}],
+        "stream": False,
+        "persona": "customer",
+    }
+    response = client.post("/api/generate", json=payload)
+    assert response.status_code == 200
+
+    log_lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(log_lines) == 1
+
+    record = json.loads(log_lines[0])
+    assert record["persona"] == "customer"
+    assert record["user_message"]["content"] == "Hello there"
+    assert record["assistant_message"]["content"] == "Assistant reply"
+    assert record["conversation"][-1]["role"] == "assistant"
+
+
+@pytest.mark.unit
+def test_generate_streaming_logs_messages(tmp_path, client, monkeypatch):
+    """Ensure streaming responses are also persisted."""
+    log_path = tmp_path / "stream_chat.jsonl"
+    monkeypatch.setattr(app_main, "chat_logger", ChatLogger(log_path))
+
+    class FakeRequestOutput:
+        def __init__(self, text, finished):
+            self.outputs = [MagicMock(text=text)]
+            self.finished = finished
+
+    class FakeAsyncIterator:
+        def __init__(self, items):
+            self._items = iter(items)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._items)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    def fake_generate(prompt, sampling_params, request_id):
+        return FakeAsyncIterator(
+            [
+                FakeRequestOutput(f"{prompt}Partial", False),
+                FakeRequestOutput(f"{prompt}Partial final", True),
+            ]
+        )
+
+    monkeypatch.setattr(app_main.engine, "generate", fake_generate)
+
+    payload = {
+        "messages": [{"role": "user", "content": "Stream this"}],
+        "stream": True,
+        "persona": "analyst",
+    }
+    response = client.post("/api/generate", json=payload, stream=True)
+    assert response.status_code == 200
+
+    # Consume the streaming body to trigger finalization.
+    list(response.iter_lines())
+
+    log_line = log_path.read_text(encoding="utf-8").strip()
+    record = json.loads(log_line)
+    assert record["persona"] == "analyst"
+    assert record["assistant_message"]["content"] == "Partial final"
+    assert record["user_message"]["content"] == "Stream this"
