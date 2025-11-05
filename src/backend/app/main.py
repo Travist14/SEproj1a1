@@ -149,6 +149,7 @@
 
 
 
+import json
 import uuid
 from typing import AsyncGenerator, List, Optional
 
@@ -228,9 +229,11 @@ async def stream_completion(
     Each yield is a line of JSON containing the new text delta.
     """
     request_id = str(uuid.uuid4())
+    print(f"[backend] Streaming LLM response for request {request_id}.")
     # submit request
     results_generator = engine.generate(prompt, sampling_params, request_id=request_id)
 
+    latest_text = ""
     async for request_output in results_generator:
         # request_output is vllm.outputs.RequestOutput
         # it can contain multiple outputs, but we asked for 1
@@ -238,6 +241,7 @@ async def stream_completion(
         # output.text is the full text so far; delta is last token(s)
         # vLLM exposes token_ids, logprobs, etc.
         delta_text = output.text[len(prompt):]
+        latest_text = delta_text
         chunk = {
             "id": request_id,
             "event": "token",
@@ -246,6 +250,7 @@ async def stream_completion(
         }
         yield (f"{chunk}\n").encode("utf-8")
 
+    print(f"[backend] Completed streaming response for request {request_id}: {latest_text}")
     # final message
     done_chunk = {"id": request_id, "event": "end", "finished": True}
     yield (f"{done_chunk}\n").encode("utf-8")
@@ -255,7 +260,13 @@ async def stream_completion(
 @app.post("/generate")
 @app.post("/api/generate")
 async def generate(req: ChatRequest):
+    request_payload = req.model_dump()
+    print("[backend] Received chat request from frontend:")
+    print(json.dumps(request_payload, indent=2))
+
     prompt = messages_to_prompt(req.messages)
+    print("[backend] Prompt constructed for LLM:")
+    print(prompt)
 
     sampling_params = SamplingParams(
         max_tokens=req.max_tokens,
@@ -265,6 +276,7 @@ async def generate(req: ChatRequest):
     )
 
     if req.stream:
+        print("[backend] Streaming response requested.")
         return StreamingResponse(
             stream_completion(prompt, sampling_params),
             media_type="text/plain",
@@ -272,10 +284,12 @@ async def generate(req: ChatRequest):
     else:
         # non-streaming path
         request_id = str(uuid.uuid4())
+        print(f"[backend] Submitting non-streaming request {request_id} to LLM.")
         results = await engine.generate(prompt, sampling_params, request_id=request_id)
         if not results:
             raise HTTPException(status_code=500, detail="No response from model")
         output = results[0].outputs[0].text
+        print(f"[backend] Completed non-streaming response for request {request_id}: {output}")
         return {"id": request_id, "output": output}
 
 
