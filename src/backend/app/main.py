@@ -233,27 +233,24 @@ async def stream_completion(
     # submit request
     results_generator = engine.generate(prompt, sampling_params, request_id=request_id)
 
-    latest_text = ""
+    full_text = ""
     async for request_output in results_generator:
         # request_output is vllm.outputs.RequestOutput
         # it can contain multiple outputs, but we asked for 1
         output = request_output.outputs[0]
         # output.text is the full text so far; delta is last token(s)
         # vLLM exposes token_ids, logprobs, etc.
-        delta_text = output.text[len(prompt):]
-        latest_text = delta_text
-        chunk = {
-            "id": request_id,
-            "event": "token",
-            "text": delta_text,
-            "finished": request_output.finished,
-        }
-        yield (f"{chunk}\n").encode("utf-8")
+        current_text = output.text[len(prompt):]
+        delta_text = current_text[len(full_text):]
+        if not delta_text:
+            continue
+        full_text = current_text
+        chunk = json.dumps({"id": request_id, "text": delta_text})
+        yield (f"data: {chunk}\n\n").encode("utf-8")
 
-    print(f"[backend] Completed streaming response for request {request_id}: {latest_text}")
+    print(f"[backend] Completed streaming response for request {request_id}: {full_text}")
     # final message
-    done_chunk = {"id": request_id, "event": "end", "finished": True}
-    yield (f"{done_chunk}\n").encode("utf-8")
+    yield b"data: [DONE]\n\n"
 
 
 # ----- ROUTES -----
@@ -279,7 +276,8 @@ async def generate(req: ChatRequest):
         print("[backend] Streaming response requested.")
         return StreamingResponse(
             stream_completion(prompt, sampling_params),
-            media_type="text/plain",
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
         )
     else:
         # non-streaming path

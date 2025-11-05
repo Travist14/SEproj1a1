@@ -71,8 +71,22 @@ async function handleStream(response, onToken) {
       if (payload.startsWith('ERROR:')) {
         throw new Error(payload.slice(6).trim() || 'Stream error');
       }
-      onToken(payload);
-      aggregate += payload;
+      let token = payload;
+      try {
+        const parsed = JSON.parse(payload);
+        if (typeof parsed === 'string') {
+          token = parsed;
+        } else if (parsed && typeof parsed.text === 'string') {
+          token = parsed.text;
+        }
+      } catch {
+        // payload was plain text - keep as-is
+      }
+      if (!token) {
+        continue;
+      }
+      onToken(token);
+      aggregate += token;
     }
   }
   return aggregate;
