@@ -162,13 +162,16 @@ from vllm.sampling_params import SamplingParams
 app = FastAPI(title="Llama 3.1 8B Instruct API", version="0.1.0")
 
 # ----- CONFIG -----
-MODEL_NAME = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # change to your path
+MODEL_NAME = "meta-llama/Meta-Llama-3.1-8B-Instruct"  # name of model that we are using, this expects a huggingface repo name
+TENSOR_PARALLEL_SIZE = 1  # adjust based on gpu memory 
+gpu_memory_utilization = 0.9  
+
 # You can pass extra engine args here (tensor-parallel-size, gpu-memory-utilization, etc.)
 engine_args = AsyncEngineArgs(
     model=MODEL_NAME,
     trust_remote_code=True,
-    # tensor_parallel_size=2,
-    # gpu_memory_utilization=0.9,
+    tensor_parallel_size=TENSOR_PARALLEL_SIZE,
+    gpu_memory_utilization=gpu_memory_utilization,
 )
 engine: AsyncLLMEngine = AsyncLLMEngine.from_engine_args(engine_args)
 
