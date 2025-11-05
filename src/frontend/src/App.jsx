@@ -50,7 +50,7 @@ export default function App() {
           disabled={status === 'pending'}
           status={status}
         />
-        {status === 'pending' ? <span className="status">Streaming response...</span> : null}
+        {status === 'pending' ? <span className="status">Generating response...</span> : null}
         {status === 'error' ? <span className="status status-error">Last request failed.</span> : null}
       </footer>
     </div>

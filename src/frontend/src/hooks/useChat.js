@@ -42,7 +42,7 @@ export function useChat(personaKey = 'developer') {
       }
 
       const userMessage = createMessage('user', content);
-      const assistantMessage = createMessage('assistant', '', { pending: true });
+      const assistantMessage = createMessage('assistant', 'Thinking...', { pending: true });
 
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
       setStatus('pending');
@@ -58,22 +58,19 @@ export function useChat(personaKey = 'developer') {
 
         const completion = await generateCompletion(apiMessages, {
           signal: controller.signal,
-          onToken: (token) => {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMessage.id
-                  ? { ...msg, content: msg.content + token }
-                  : msg
-              )
-            );
-          },
           persona: personaRef.current
         });
+        const normalized = (completion ?? '').trim();
+        console.debug('[chat] Assistant response:', normalized);
 
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMessage.id
-              ? { ...msg, content: completion || msg.content, pending: false }
+              ? {
+                  ...msg,
+                  content: normalized || 'I was unable to generate a response. Please try again.',
+                  pending: false
+                }
               : msg
           )
         );
