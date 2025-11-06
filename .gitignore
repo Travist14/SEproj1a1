@@ -1,2 +1,12 @@
 */node_modules/
 */__pycache__/
+
+src/backend/.venv/
+src/backend/app/__pycache__/
+src/frontend/node_modules/@esbuild/linux-x64/
+src/frontend/node_modules/@rollup/rollup-linux-x64-gnu/
+src/frontend/node_modules/@rollup/rollup-linux-x64-musl/
+
+src/frontend/node_modules/.vite/deps/_metadata.json
+
+

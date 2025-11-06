@@ -29,9 +29,11 @@ LOGGER = logging.getLogger(__name__)
 
 MODEL_ENV_VAR = "VLLM_MODEL"
 DEFAULT_MODEL_ID = "Qwen/Qwen3-4B"
-DEFAULT_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", "512"))
+DEFAULT_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", "1024"))
 DEFAULT_TOP_P = float(os.getenv("VLLM_TOP_P", "0.95"))
 DEFAULT_TEMPERATURE = float(os.getenv("VLLM_TEMPERATURE", "0.7"))
+DEFAULT_FREQUENCY_PENALTY = float(os.getenv("VLLM_FREQUENCY_PENALTY", "0.8"))
+DEFAULT_STOP_SEQUENCES = ["\nSystem:", "\nUser:"]
 
 
 class ChatMessage(BaseModel):
@@ -63,7 +65,7 @@ class GenerateRequest(BaseModel):
         default=0.0, ge=-2.0, le=2.0, description="Presence penalty following OpenAI semantics."
     )
     frequency_penalty: float = Field(
-        default=0.0, ge=-2.0, le=2.0, description="Frequency penalty following OpenAI semantics."
+        default=DEFAULT_FREQUENCY_PENALTY, ge=-2.0, le=2.0, description="Frequency penalty following OpenAI semantics."
     )
     stop: Optional[List[str]] = Field(
         default=None, description="Optional list of strings that will terminate generation."
@@ -140,6 +142,11 @@ def format_chat_prompt(messages: List[ChatMessage]) -> str:
         content = message.content.strip()
         prompt_segments.append(f"{role}: {content}")
 
+    prompt_segments.append(
+        "System: Reply directly to the user. Do not narrate analysis or internal thoughts. "
+        "Do not create new System/User/Assistant turns, restate the conversation log, or add meta commentary such as "
+        "'Assistant:'/'Answer:' labels or closing markers. Provide a single, user-facing answer."
+    )
     # Ensure the model continues the assistant turn.
     prompt_segments.append("Assistant:")
     return "\n\n".join(prompt_segments)
@@ -147,6 +154,10 @@ def format_chat_prompt(messages: List[ChatMessage]) -> str:
 
 def build_sampling_params(payload: GenerateRequest) -> SamplingParams:
     """Create sampling parameters for vLLM from the request payload."""
+    stop_sequences = list(DEFAULT_STOP_SEQUENCES)
+    if payload.stop:
+        # Preserve caller-provided stops while ensuring role prefixes still terminate output.
+        stop_sequences = list(dict.fromkeys(payload.stop + stop_sequences))
     return SamplingParams(
         n=1,
         best_of=1,
@@ -155,7 +166,7 @@ def build_sampling_params(payload: GenerateRequest) -> SamplingParams:
         top_p=payload.top_p,
         presence_penalty=payload.presence_penalty,
         frequency_penalty=payload.frequency_penalty,
-        stop=payload.stop,
+        stop=stop_sequences,
     )
 
 

@@ -207,7 +207,7 @@ Generate requirements from a prompt with persona context.
       "content": "Build user authentication"
     }
   ],
-  "max_tokens": 512,
+  "max_tokens": 1024,
   "temperature": 0.7,
   "top_p": 0.9,
   "stream": true
@@ -530,16 +530,17 @@ Edit `src/backend/app/main.py` or use environment variables:
 - **MODEL_NAME**: HuggingFace model identifier (default: meta-llama/Meta-Llama-3.1-8B-Instruct)
 - **TENSOR_PARALLEL_SIZE**: GPU parallelism (default: 1)
 - **GPU_MEMORY_UTILIZATION**: GPU memory fraction (default: 0.9)
-- **MAX_TOKENS**: Maximum generation tokens (default: 512)
+- **MAX_TOKENS**: Maximum generation tokens (default: 1024)
+- **FREQUENCY_PENALTY**: Repetition penalty applied to each request (default: 0.5)
 - **TEMPERATURE**: Sampling temperature (default: 0.7)
 - **TOP_P**: Nucleus sampling parameter (default: 0.9)
 
 ### Frontend Configuration
 
-Edit `src/frontend/src/config/api.js`:
+Edit `src/frontend/src/config/api.js` (if present in your setup):
 
 - **API_BASE_URL**: Backend API URL (default: http://localhost:8001)
-- **DEFAULT_MAX_TOKENS**: Default token limit (default: 512)
+- **DEFAULT_MAX_TOKENS**: Default token limit (default: 1024)
 - **DEFAULT_TEMPERATURE**: Default temperature (default: 0.7)
 
 ---
