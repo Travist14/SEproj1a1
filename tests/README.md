@@ -76,28 +76,42 @@ pytest --version
 
 ## Running Tests
 
-### Run All Tests
+### Quick Start
 
+To run all tests:
+
+1. Install the required dependencies:
 ```bash
-# From the project root directory
-pytest
+pip install -r requirements.txt
 ```
 
-### Run Specific Test Categories
+2. Run the test suite:
+```bash
+./run_tests.sh
+```
+
+The test runner will:
+- Run all test categories (backend, requirements, fixtures, integration)
+- Generate a coverage report
+- Show a clear summary of passes and failures
+- Skip tests that are still under development (e.g., multi-agent tests)
+
+### Advanced Usage
+
+For more granular test execution, you can still use pytest directly:
 
 ```bash
-# Unit tests only
-pytest -m unit
+# Run specific test categories
+pytest backend/            # Backend tests only
+pytest requirements/       # Requirements tests only
+pytest integration/       # Integration tests only
 
-# Integration tests only
-pytest -m integration
+# Run with specific markers
+pytest -m unit            # Unit tests only
+pytest -m integration     # Integration tests only
+```
 
-# Tests that require LLM (skip by default)
-pytest -m requires_llm
-
-Note about placeholder integration tests: some integration tests in `tests/integration/` are placeholders and are skipped by default. To run them set the environment variable `ENABLE_INTEGRATION_TESTS=1` when invoking pytest. Example:
-
-```bash
+Note: Some integration tests in `tests/integration/` are placeholders and are skipped by default. The test runner handles this automatically.
 # Enable and run integration placeholders
 ENABLE_INTEGRATION_TESTS=1 pytest tests/integration/test_multi_agent.py
 ```
