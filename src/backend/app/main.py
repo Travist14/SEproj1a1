@@ -105,6 +105,10 @@ class OrchestratorRequest(BaseModel):
         le=3072,
         description="Token budget for the requirements document.",
     )
+    include_requirements: bool = Field(
+        default=True,
+        description="Generate the requirements engineering document as part of the orchestrator run.",
+    )
 
 
 class OrchestratorResponse(BaseModel):
@@ -300,7 +304,7 @@ def build_summary_prompt(persona: str, transcripts: Sequence[ChatTranscript]) ->
         Summarise the key goals, pain points, and constraints expressed by the '{persona_label}' stakeholder
         across the chat transcripts. Focus on actionable insights that influence product requirements.
 
-        Provide a concise summary as 3-6 bullet points.
+        Provide a concise summary using bullet points. Use at most five lines in total.
         """
     ).strip()
 
@@ -338,6 +342,30 @@ def build_requirements_prompt(summaries: Dict[str, str]) -> str:
         f"{instructions}\n\n"
         f"Stakeholder Summaries:\n{stakeholder_section}\n\n"
         "Requirements Document:\n"
+    )
+
+
+def clamp_lines(text: str, *, max_lines: int) -> str:
+    """Clamp text to at most the specified number of non-empty lines."""
+    if not text:
+        return text
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    limited = lines[:max_lines]
+    return "\n".join(limited).strip()
+
+
+async def generate_requirements_document(
+    summaries: Dict[str, str],
+    *,
+    requirements_max_tokens: int,
+) -> str:
+    """Generate the requirements engineering document from prepared summaries."""
+    requirements_prompt = build_requirements_prompt(summaries)
+    return await generate_text_response(
+        requirements_prompt,
+        max_tokens=requirements_max_tokens,
+        temperature=0.45,
+        top_p=0.92,
     )
 
 
@@ -390,6 +418,7 @@ async def run_orchestrator_job(
     max_transcripts_per_persona: Optional[int],
     summary_max_tokens: int,
     requirements_max_tokens: int,
+    include_requirements: bool,
 ) -> OrchestratorResponse:
     """Execute the orchestrator pipeline and return the generated artefacts."""
     transcripts_by_persona = await chat_storage.load_transcripts(
@@ -411,18 +440,17 @@ async def run_orchestrator_job(
             temperature=0.35,
             top_p=0.9,
         )
-        summaries[persona] = summary_text
+        summaries[persona] = clamp_lines(summary_text, max_lines=5)
 
     if not summaries:
         raise ValueError("No transcripts available for the requested personas.")
 
-    requirements_prompt = build_requirements_prompt(summaries)
-    requirements_document = await generate_text_response(
-        requirements_prompt,
-        max_tokens=requirements_max_tokens,
-        temperature=0.45,
-        top_p=0.92,
-    )
+    requirements_document = ""
+    if include_requirements:
+        requirements_document = await generate_requirements_document(
+            summaries,
+            requirements_max_tokens=requirements_max_tokens,
+        )
 
     return OrchestratorResponse(summaries=summaries, requirements_document=requirements_document)
 
@@ -435,6 +463,7 @@ async def refresh_orchestrator_state() -> None:
             max_transcripts_per_persona=ORCHESTRATOR_DEFAULT_MAX_TRANSCRIPTS,
             summary_max_tokens=ORCHESTRATOR_DEFAULT_SUMMARY_TOKENS,
             requirements_max_tokens=ORCHESTRATOR_DEFAULT_REQUIREMENTS_TOKENS,
+            include_requirements=False,
         )
     except ValueError:
         LOGGER.info("Skipping orchestrator refresh; no transcripts available.")
@@ -644,6 +673,7 @@ async def orchestrate(payload: OrchestratorRequest) -> OrchestratorResponse:
             max_transcripts_per_persona=payload.max_transcripts_per_persona,
             summary_max_tokens=payload.summary_max_tokens,
             requirements_max_tokens=payload.requirements_max_tokens,
+            include_requirements=payload.include_requirements,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
