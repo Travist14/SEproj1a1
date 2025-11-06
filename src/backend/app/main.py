@@ -7,12 +7,15 @@ import json
 import logging
 import os
 import uuid
-from typing import AsyncIterator, List, Optional
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+
+from .chat_storage import ChatStorage, ChatTranscript
 
 try:
     from vllm import AsyncEngineArgs, AsyncLLMEngine
@@ -119,6 +122,7 @@ class EngineManager:
 
 
 engine_manager = EngineManager()
+chat_storage = ChatStorage()
 
 app = FastAPI(title="SEproj Chat Backend", version="0.1.0")
 
@@ -152,6 +156,49 @@ def format_chat_prompt(messages: List[ChatMessage]) -> str:
     return "\n\n".join(prompt_segments)
 
 
+def serialise_messages(messages: List[ChatMessage]) -> List[Dict[str, str]]:
+    """Convert Pydantic chat messages into plain dictionaries."""
+    return [message.model_dump() for message in messages]
+
+
+def build_generation_metadata(payload: GenerateRequest) -> Dict[str, Any]:
+    """Capture the caller-specified sampling configuration for persistence."""
+    return {
+        "max_tokens": payload.max_tokens,
+        "temperature": payload.temperature,
+        "top_p": payload.top_p,
+        "presence_penalty": payload.presence_penalty,
+        "frequency_penalty": payload.frequency_penalty,
+        "stop": payload.stop,
+        "stream": payload.stream,
+    }
+
+
+async def persist_chat_transcript(
+    request_id: str,
+    *,
+    messages: List[Dict[str, str]],
+    response_text: str,
+    finish_reason: Optional[str],
+    persona: Optional[str],
+    generation_parameters: Dict[str, Any],
+) -> None:
+    """Persist a completed chat interaction for downstream orchestration."""
+    transcript = ChatTranscript(
+        request_id=request_id,
+        messages=messages,
+        response_text=response_text,
+        finish_reason=finish_reason,
+        persona=persona,
+        parameters=generation_parameters,
+        created_at=datetime.now(timezone.utc),
+    )
+    try:
+        await chat_storage.save_transcript(transcript)
+    except Exception as exc:  # pragma: no cover - defensive logging.
+        LOGGER.exception("Failed to persist chat transcript (request_id=%s)", request_id, exc_info=exc)
+
+
 def build_sampling_params(payload: GenerateRequest) -> SamplingParams:
     """Create sampling parameters for vLLM from the request payload."""
     stop_sequences = list(DEFAULT_STOP_SEQUENCES)
@@ -174,6 +221,10 @@ async def iterate_generation(
     prompt: str,
     sampling_params: SamplingParams,
     request_id: str,
+    *,
+    messages: List[Dict[str, str]],
+    persona: Optional[str],
+    generation_parameters: Dict[str, Any],
 ) -> AsyncIterator[bytes]:
     """Stream generation results in an NDJSON format."""
     engine = await engine_manager.get_engine()
@@ -207,6 +258,14 @@ async def iterate_generation(
                 ).encode("utf-8") + b"\n"
 
         finish_reason = getattr(last_generation, "finish_reason", None)
+        await persist_chat_transcript(
+            request_id,
+            messages=messages,
+            response_text=previous_text,
+            finish_reason=finish_reason,
+            persona=persona,
+            generation_parameters=generation_parameters,
+        )
         yield json.dumps(
             {
                 "type": "done",
@@ -249,10 +308,20 @@ async def generate(payload: GenerateRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     request_id = uuid.uuid4().hex
+    message_payload = serialise_messages(payload.messages)
+    generation_metadata = build_generation_metadata(payload)
+    persona = payload.persona
 
     if payload.stream:
         headers = {"Cache-Control": "no-cache", "X-Request-ID": request_id}
-        stream = iterate_generation(prompt, sampling_params, request_id)
+        stream = iterate_generation(
+            prompt,
+            sampling_params,
+            request_id,
+            messages=message_payload,
+            persona=persona,
+            generation_parameters=generation_metadata,
+        )
         return StreamingResponse(stream, media_type="application/x-ndjson", headers=headers)
 
     engine = await engine_manager.get_engine()
@@ -269,6 +338,15 @@ async def generate(payload: GenerateRequest):
         generation = request_output.outputs[0]
         latest_text = generation.text
         finish_reason = generation.finish_reason
+
+    await persist_chat_transcript(
+        request_id,
+        messages=message_payload,
+        response_text=latest_text.strip(),
+        finish_reason=finish_reason,
+        persona=persona,
+        generation_parameters=generation_metadata,
+    )
 
     return {
         "output": latest_text.strip(),
