@@ -6,6 +6,8 @@
 [![React](https://img.shields.io/badge/React-18.3+-61DAFB.svg)](https://react.dev)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![DOI](https://doi.org/10.5281/zenodo.17547006)]
+[![DOI](https://zenodo.org/badge/1045820216.svg)](https://doi.org/10.5281/zenodo.17547005)
+
 
 ---
 
