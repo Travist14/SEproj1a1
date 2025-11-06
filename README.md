@@ -1,11 +1,12 @@
 # MARC - Multi-Agent Requirement Collaboration
 
+[![DOI](https://zenodo.org/badge/1045820216.svg)](https://doi.org/10.5281/zenodo.17547005)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](./TESTING.md)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-009688.svg)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18.3+-61DAFB.svg)](https://react.dev)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![DOI](https://zenodo.org/badge/1045820216.svg)](https://doi.org/10.5281/zenodo.17547005)
+
 
 
 ---
