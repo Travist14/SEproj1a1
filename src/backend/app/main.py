@@ -6,9 +6,10 @@ import asyncio
 import json
 import logging
 import os
+import textwrap
 import uuid
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +80,48 @@ class GenerateRequest(BaseModel):
     )
 
 
+class OrchestratorRequest(BaseModel):
+    """Request payload for orchestrator endpoint."""
+
+    personas: Optional[List[str]] = Field(
+        default=None,
+        description="Optional subset of personas/stakeholders to include. Defaults to all stored transcripts.",
+    )
+    max_transcripts_per_persona: Optional[int] = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Maximum number of recent transcripts loaded per persona.",
+    )
+    summary_max_tokens: int = Field(
+        default=512,
+        ge=128,
+        le=2048,
+        description="Token budget for each stakeholder summary.",
+    )
+    requirements_max_tokens: int = Field(
+        default=1024,
+        ge=256,
+        le=3072,
+        description="Token budget for the requirements document.",
+    )
+
+
+class OrchestratorResponse(BaseModel):
+    """Response payload for orchestrator endpoint."""
+
+    summaries: Dict[str, str] = Field(description="Generated summaries keyed by persona.")
+    requirements_document: str = Field(description="Generated requirements engineering document.")
+
+
+class OrchestratorStateResponse(BaseModel):
+    """State payload returned by orchestrator state endpoint."""
+
+    updated_at: datetime = Field(description="Timestamp when the orchestrator plan was last updated.")
+    summaries: Dict[str, str] = Field(description="Latest stakeholder summaries keyed by persona.")
+    requirements_document: str = Field(description="Latest requirements engineering document.")
+
+
 class EngineManager:
     """Lazy-initialises and caches a single AsyncLLMEngine instance."""
 
@@ -124,6 +167,16 @@ class EngineManager:
 engine_manager = EngineManager()
 chat_storage = ChatStorage()
 
+ORCHESTRATOR_DEFAULT_MAX_TRANSCRIPTS = 5
+ORCHESTRATOR_DEFAULT_SUMMARY_TOKENS = 512
+ORCHESTRATOR_DEFAULT_REQUIREMENTS_TOKENS = 1024
+
+_orchestrator_state_lock = asyncio.Lock()
+_orchestrator_state: Optional[OrchestratorResponse] = None
+_orchestrator_state_updated_at: Optional[datetime] = None
+_orchestrator_update_task: Optional[asyncio.Task] = None
+_orchestrator_refresh_pending = False
+
 app = FastAPI(title="SEproj Chat Backend", version="0.1.0")
 
 app.add_middleware(
@@ -133,6 +186,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def trigger_initial_orchestrator_refresh() -> None:
+    """Ensure the orchestrator plan is computed shortly after startup."""
+    schedule_orchestrator_refresh()
 
 
 def format_chat_prompt(messages: List[ChatMessage]) -> str:
@@ -198,6 +257,224 @@ async def persist_chat_transcript(
     except Exception as exc:  # pragma: no cover - defensive logging.
         LOGGER.exception("Failed to persist chat transcript (request_id=%s)", request_id, exc_info=exc)
 
+
+def truncate_text(value: str, max_length: int = 600) -> str:
+    """Trim long text blocks to keep prompts manageable."""
+    text = value.strip()
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3].rstrip() + "..."
+
+
+def format_transcript_for_prompt(transcript: ChatTranscript) -> str:
+    """Render a transcript into a compact textual format for prompting."""
+    lines = [
+        f"- request_id: {transcript.request_id}",
+        f"  timestamp: {transcript.created_at.isoformat()}",
+        "  dialogue:",
+    ]
+
+    for message in transcript.messages:
+        role = message.get("role", "unknown")
+        content = truncate_text(message.get("content", ""))
+        lines.append(f"    - {role}: {content}")
+
+    response = truncate_text(transcript.response_text)
+    if response:
+        lines.append(f"    - assistant_response: {response}")
+    if transcript.finish_reason:
+        lines.append(f"  finish_reason: {transcript.finish_reason}")
+    if transcript.parameters:
+        lines.append(f"  parameters: {json.dumps(transcript.parameters, ensure_ascii=True)}")
+
+    return "\n".join(lines)
+
+
+def build_summary_prompt(persona: str, transcripts: Sequence[ChatTranscript]) -> str:
+    """Create a prompt asking the model to summarise a stakeholder's transcripts."""
+    persona_label = persona or "general"
+    joined_transcripts = "\n".join(format_transcript_for_prompt(t) for t in transcripts)
+    instructions = textwrap.dedent(
+        f"""
+        You are the orchestrator agent for a requirements engineering project.
+        Summarise the key goals, pain points, and constraints expressed by the '{persona_label}' stakeholder
+        across the chat transcripts. Focus on actionable insights that influence product requirements.
+
+        Provide a concise summary as 3-6 bullet points.
+        """
+    ).strip()
+
+    return (
+        f"{instructions}\n\n"
+        f"Transcripts:\n{joined_transcripts}\n\n"
+        "Stakeholder Summary:\n"
+    )
+
+
+def build_requirements_prompt(summaries: Dict[str, str]) -> str:
+    """Create a prompt that asks the model to produce a requirements engineering document."""
+    stakeholder_section = "\n\n".join(
+        f"Stakeholder: {persona or 'general'}\nSummary:\n{summary.strip()}"
+        for persona, summary in summaries.items()
+    )
+
+    instructions = textwrap.dedent(
+        """
+        You are a senior requirements engineer. Using the stakeholder summaries below,
+        produce a cohesive requirements document that reconciles all perspectives.
+
+        Structure the response with the following sections:
+        1. Project Overview
+        2. Stakeholder Goals (grouped by stakeholder)
+        3. Functional Requirements
+        4. Non-Functional Requirements / Constraints
+        5. Risks and Open Questions
+
+        Keep each section succinct but specific enough to guide implementation planning.
+        """
+    ).strip()
+
+    return (
+        f"{instructions}\n\n"
+        f"Stakeholder Summaries:\n{stakeholder_section}\n\n"
+        "Requirements Document:\n"
+    )
+
+
+async def generate_text_response(
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float = 0.4,
+    top_p: float = 0.9,
+    presence_penalty: float = 0.0,
+    frequency_penalty: float = 0.2,
+) -> str:
+    """Run a single-turn completion with the shared model."""
+    engine = await engine_manager.get_engine()
+    sampling_params = SamplingParams(
+        n=1,
+        best_of=1,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+    )
+
+    latest_text = ""
+    async for request_output in engine.generate(
+        prompt=prompt,
+        sampling_params=sampling_params,
+        request_id=uuid.uuid4().hex,
+    ):
+        if not request_output.outputs:
+            continue
+        generation = request_output.outputs[0]
+        latest_text = generation.text
+
+    return latest_text.strip()
+
+
+async def _set_orchestrator_state(result: OrchestratorResponse) -> None:
+    """Store the latest orchestrator result for quick retrieval."""
+    global _orchestrator_state, _orchestrator_state_updated_at
+    async with _orchestrator_state_lock:
+        _orchestrator_state = result
+        _orchestrator_state_updated_at = datetime.now(timezone.utc)
+
+
+async def run_orchestrator_job(
+    *,
+    personas: Optional[Sequence[str]],
+    max_transcripts_per_persona: Optional[int],
+    summary_max_tokens: int,
+    requirements_max_tokens: int,
+) -> OrchestratorResponse:
+    """Execute the orchestrator pipeline and return the generated artefacts."""
+    transcripts_by_persona = await chat_storage.load_transcripts(
+        personas=personas,
+        limit_per_persona=max_transcripts_per_persona,
+    )
+
+    if not transcripts_by_persona:
+        raise ValueError("No transcripts available for the requested personas.")
+
+    summaries: Dict[str, str] = {}
+    for persona, transcripts in transcripts_by_persona.items():
+        if not transcripts:
+            continue
+        summary_prompt = build_summary_prompt(persona, transcripts)
+        summary_text = await generate_text_response(
+            summary_prompt,
+            max_tokens=summary_max_tokens,
+            temperature=0.35,
+            top_p=0.9,
+        )
+        summaries[persona] = summary_text
+
+    if not summaries:
+        raise ValueError("No transcripts available for the requested personas.")
+
+    requirements_prompt = build_requirements_prompt(summaries)
+    requirements_document = await generate_text_response(
+        requirements_prompt,
+        max_tokens=requirements_max_tokens,
+        temperature=0.45,
+        top_p=0.92,
+    )
+
+    return OrchestratorResponse(summaries=summaries, requirements_document=requirements_document)
+
+
+async def refresh_orchestrator_state() -> None:
+    """Recompute and cache the orchestrator plan using default parameters."""
+    try:
+        result = await run_orchestrator_job(
+            personas=None,
+            max_transcripts_per_persona=ORCHESTRATOR_DEFAULT_MAX_TRANSCRIPTS,
+            summary_max_tokens=ORCHESTRATOR_DEFAULT_SUMMARY_TOKENS,
+            requirements_max_tokens=ORCHESTRATOR_DEFAULT_REQUIREMENTS_TOKENS,
+        )
+    except ValueError:
+        LOGGER.info("Skipping orchestrator refresh; no transcripts available.")
+        return
+    except Exception as exc:  # pragma: no cover - defensive logging.
+        LOGGER.exception("Orchestrator refresh failed", exc_info=exc)
+        return
+
+    await _set_orchestrator_state(result)
+
+
+def schedule_orchestrator_refresh() -> None:
+    """Schedule a background orchestrator refresh if one is not already running."""
+    global _orchestrator_update_task, _orchestrator_refresh_pending
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        LOGGER.warning("No running event loop; cannot schedule orchestrator refresh.")
+        return
+
+    if _orchestrator_update_task and not _orchestrator_update_task.done():
+        _orchestrator_refresh_pending = True
+        return
+
+    task = loop.create_task(refresh_orchestrator_state())
+    _orchestrator_update_task = task
+
+    def _handle_completion(completed: asyncio.Task) -> None:
+        global _orchestrator_update_task, _orchestrator_refresh_pending
+        try:
+            completed.result()
+        except Exception as exc:  # pragma: no cover - defensive logging.
+            LOGGER.exception("Background orchestrator refresh failed", exc_info=exc)
+        finally:
+            _orchestrator_update_task = None
+            if _orchestrator_refresh_pending:
+                _orchestrator_refresh_pending = False
+                schedule_orchestrator_refresh()
+
+    task.add_done_callback(_handle_completion)
 
 def build_sampling_params(payload: GenerateRequest) -> SamplingParams:
     """Create sampling parameters for vLLM from the request payload."""
@@ -266,6 +543,7 @@ async def iterate_generation(
             persona=persona,
             generation_parameters=generation_parameters,
         )
+        schedule_orchestrator_refresh()
         yield json.dumps(
             {
                 "type": "done",
@@ -347,9 +625,45 @@ async def generate(payload: GenerateRequest):
         persona=persona,
         generation_parameters=generation_metadata,
     )
+    schedule_orchestrator_refresh()
 
     return {
         "output": latest_text.strip(),
         "finish_reason": finish_reason,
         "request_id": request_id,
     }
+
+
+@app.post("/orchestrate", response_model=OrchestratorResponse)
+@app.post("/api/orchestrate", response_model=OrchestratorResponse)
+async def orchestrate(payload: OrchestratorRequest) -> OrchestratorResponse:
+    """Run the orchestrator agent to summarise transcripts and produce a requirements document."""
+    try:
+        result = await run_orchestrator_job(
+            personas=payload.personas,
+            max_transcripts_per_persona=payload.max_transcripts_per_persona,
+            summary_max_tokens=payload.summary_max_tokens,
+            requirements_max_tokens=payload.requirements_max_tokens,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - defensive logging.
+        LOGGER.exception("Failed to execute orchestrator request", exc_info=exc)
+        raise HTTPException(status_code=500, detail="Failed to run orchestrator.") from exc
+
+    await _set_orchestrator_state(result)
+    return result
+
+
+@app.get("/orchestrator/state", response_model=OrchestratorStateResponse)
+@app.get("/api/orchestrator/state", response_model=OrchestratorStateResponse)
+async def get_orchestrator_state() -> OrchestratorStateResponse:
+    """Return the cached orchestrator plan if one is available."""
+    async with _orchestrator_state_lock:
+        if _orchestrator_state is None or _orchestrator_state_updated_at is None:
+            raise HTTPException(status_code=404, detail="Orchestrator state not yet available.")
+        return OrchestratorStateResponse(
+            updated_at=_orchestrator_state_updated_at,
+            summaries=_orchestrator_state.summaries,
+            requirements_document=_orchestrator_state.requirements_document,
+        )

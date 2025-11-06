@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 CHAT_STORAGE_DIR_ENV = "CHAT_STORAGE_DIR"
 DEFAULT_CHAT_STORAGE_SUBDIR = "chats"
@@ -35,6 +35,7 @@ class ChatTranscript:
     persona: Optional[str]
     parameters: Dict[str, Any]
     created_at: datetime
+    source_path: Optional[Path] = None
 
     def as_dict(self) -> Dict[str, Any]:
         """Serialise the transcript into JSON-compatible data."""
@@ -50,6 +51,22 @@ class ChatTranscript:
             },
             "generation_parameters": self.parameters,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any], *, source_path: Optional[Path] = None) -> "ChatTranscript":
+        """Rehydrate a transcript from persisted JSON."""
+        created_at_raw = payload.get("created_at")
+        created_at = datetime.fromisoformat(created_at_raw) if isinstance(created_at_raw, str) else datetime.utcnow()
+        return cls(
+            request_id=payload.get("request_id", ""),
+            messages=payload.get("messages", []),
+            response_text=payload.get("response", {}).get("content", ""),
+            finish_reason=payload.get("response", {}).get("finish_reason"),
+            persona=payload.get("persona"),
+            parameters=payload.get("generation_parameters", {}),
+            created_at=created_at,
+            source_path=source_path,
+        )
 
 
 class ChatStorage:
@@ -84,7 +101,54 @@ class ChatStorage:
         path.write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
         return path
 
+    def _discover_transcript_files(self) -> List[Path]:
+        if not self._base_path.exists():
+            return []
+        return sorted(self._base_path.rglob("*.json"))
+
+    def _load_transcripts_sync(
+        self,
+        personas: Optional[Iterable[str]],
+        limit_per_persona: Optional[int],
+    ) -> Dict[str, List[ChatTranscript]]:
+        persona_filter = {p.strip().lower() for p in personas} if personas else None
+        transcripts_by_persona: Dict[str, List[ChatTranscript]] = {}
+
+        for transcript_path in self._discover_transcript_files():
+            try:
+                payload = json.loads(transcript_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+
+            persona = payload.get("persona") or "general"
+            if persona_filter and persona.strip().lower() not in persona_filter:
+                continue
+
+            transcript = ChatTranscript.from_dict(payload, source_path=transcript_path)
+            transcripts = transcripts_by_persona.setdefault(persona, [])
+            transcripts.append(transcript)
+
+        if limit_per_persona:
+            for persona, transcripts in transcripts_by_persona.items():
+                transcripts.sort(key=lambda item: item.created_at, reverse=True)
+                limited = transcripts[:limit_per_persona]
+                limited.sort(key=lambda item: item.created_at)
+                transcripts_by_persona[persona] = limited
+        else:
+            for transcripts in transcripts_by_persona.values():
+                transcripts.sort(key=lambda item: item.created_at)
+
+        return transcripts_by_persona
+
     async def save_transcript(self, transcript: ChatTranscript) -> Path:
         """Persist the transcript asynchronously to avoid blocking the event loop."""
         path = self._build_file_path(transcript)
         return await asyncio.to_thread(self._write_transcript, path, transcript)
+
+    async def load_transcripts(
+        self,
+        personas: Optional[Iterable[str]] = None,
+        limit_per_persona: Optional[int] = None,
+    ) -> Dict[str, List[ChatTranscript]]:
+        """Load transcripts grouped by persona."""
+        return await asyncio.to_thread(self._load_transcripts_sync, personas, limit_per_persona)
