@@ -12,6 +12,28 @@ MARC is a framework for collaborative, LLM-powered Requirements Engineering docu
 4. **IEEE 29148 compliance** - Ensuring requirements meet industry standards
 5. **Multi-agent collaboration** - Testing future features for agent-to-agent communication
 
+## What the test types mean
+
+Below are short, practical descriptions of the two primary test types used in this repository and what they cover here.
+
+- Unit tests
+  - Purpose: fast, deterministic checks of small pieces of code in isolation. External systems (LLMs, databases, remote APIs) are mocked.
+  - Typical targets in this repo: request/response validation, prompt/format helpers, sampling-parameter builders, parsing/extraction utilities, and IEEE-compliance checkers.
+  - Files (examples):
+    - `tests/backend/test_api.py` — FastAPI endpoint validation (health, generate payloads, error handling)
+    - `tests/backend/test_engine.py` — Prompt formatting and sampling params helpers
+    - `tests/requirements/test_extraction.py` — Requirement parsing and extraction utilities
+    - `tests/requirements/test_ieee_compliance.py` — IEEE 29148 compliance checks
+
+- Integration tests
+  - Purpose: verify how components work together (e.g., frontend config + backend endpoints + persona logic). These may touch multiple modules and can be enabled when services or required resources (LLM, DB) are available.
+  - Typical targets in this repo: persona configurations, multi-agent orchestration flows, and end-to-end requirement synthesis scenarios.
+  - Files (examples):
+    - `tests/integration/test_personas.py` — Persona configuration and expected focus areas (currently checks config and contains placeholders for behavior-driven checks)
+    - `tests/integration/test_multi_agent.py` — Multi-agent collaboration placeholders and planned orchestrator tests
+
+Note: Many integration tests are still in a placeholder state (they assert True or validate configuration only). They are intentionally skipped by default (see "Running Tests" below) to avoid confusing CI runs.
+
 ## Directory Structure
 
 ```
@@ -72,6 +94,13 @@ pytest -m integration
 
 # Tests that require LLM (skip by default)
 pytest -m requires_llm
+
+Note about placeholder integration tests: some integration tests in `tests/integration/` are placeholders and are skipped by default. To run them set the environment variable `ENABLE_INTEGRATION_TESTS=1` when invoking pytest. Example:
+
+```bash
+# Enable and run integration placeholders
+ENABLE_INTEGRATION_TESTS=1 pytest tests/integration/test_multi_agent.py
+```
 ```
 
 ### Run Specific Test Files
@@ -128,6 +157,27 @@ Tests are organized with pytest markers:
 - `@pytest.mark.integration` - Integration tests (may require services)
 - `@pytest.mark.slow` - Tests that take longer to run
 - `@pytest.mark.requires_llm` - Tests that need actual LLM connection
+
+## Current test coverage status
+
+Summary of what is implemented and what's still under development:
+
+- Implemented / stable (good unit coverage):
+  - Backend API helpers and endpoints: `tests/backend/test_api.py`
+  - Prompt formatting and sampling params: `tests/backend/test_engine.py`
+  - Requirement parsing/extraction utilities: `tests/requirements/test_extraction.py`
+  - IEEE 29148 compliance checks: `tests/requirements/test_ieee_compliance.py`
+
+- Integration tests (mixed status):
+  - `tests/integration/test_personas.py` — configuration checks and persona-focused placeholders; useful for validating persona mapping but many behavior tests remain as TODOs.
+  - `tests/integration/test_multi_agent.py` — high-level placeholders for future multi-agent orchestration and feedback loop tests; skipped by default unless ENABLE_INTEGRATION_TESTS=1 is set.
+
+- Under development / planned:
+  - Database/RAG-backed retrieval tests (RAG index, DB per-agent storage)
+  - End-to-end synthesis/orchestrator integration tests that exercise LLMs and agent coordination (will be marked `requires_llm` or gated behind env vars)
+  - Real-time feedback loop and emergency update tests
+
+If you want, I can convert placeholder integration assertions into explicit `pytest.skip("not implemented")` so test reports show skipped tests instead of passing placeholders.
 
 ## Test Fixtures
 
