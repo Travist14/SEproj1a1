@@ -32,7 +32,7 @@ else:
 LOGGER = logging.getLogger(__name__)
 
 MODEL_ENV_VAR = "VLLM_MODEL"
-DEFAULT_MODEL_ID = "Qwen/Qwen3-4B"
+DEFAULT_MODEL_ID = "Qwen/Qwen3-4B" # change this model to someting better for better performance. We just use qwen 4b cause vram 
 DEFAULT_MAX_TOKENS = int(os.getenv("VLLM_MAX_TOKENS", "1024"))
 DEFAULT_TOP_P = float(os.getenv("VLLM_TOP_P", "0.95"))
 DEFAULT_TEMPERATURE = float(os.getenv("VLLM_TEMPERATURE", "0.7"))
