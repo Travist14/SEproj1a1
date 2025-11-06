@@ -80,7 +80,7 @@ def test_sampling_params_from_request_defaults():
     """Test sampling params with default values."""
     params = sampling_params_from_request()
 
-    assert params.max_tokens == 512  # DEFAULT_MAX_TOKENS
+    assert params.max_tokens == 1024  # DEFAULT_MAX_TOKENS
     assert params.temperature == 0.7  # DEFAULT_TEMPERATURE
     assert params.stop is not None
 

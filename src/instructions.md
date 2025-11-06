@@ -8,7 +8,7 @@ This document walks through installing and running both the FastAPI/vLLM backend
 - Node.js 18+ (Vite works best on an active LTS release) and `npm`.
 - GPU with CUDA support is recommended for vLLM; CPU mode works but is slower and more memory intensive.
 - Access to the `Qwen/Qwen3-4B` weights if your hosting provider gates downloads.
-- If on ARC write export HF_HOME='/mnt/beegfs/'
+- If on ARC write `export HF_HOME='/mnt/beegfs/'`
 
 
 ## Backend (FastAPI + vLLM)
@@ -26,7 +26,8 @@ This document walks through installing and running both the FastAPI/vLLM backend
    ```
 4. (Optional) Set environment variables to customise behaviour:
    - `VLLM_MODEL` – model identifier (defaults to `Qwen/Qwen3-4B`).
-   - `VLLM_MAX_TOKENS` – default `max_tokens` for generation (defaults to `512`).
+   - `VLLM_MAX_TOKENS` – default `max_tokens` for generation (defaults to `1024`).
+   - `VLLM_FREQUENCY_PENALTY` – repetition penalty applied to every request (defaults to `0.5`).
    - `VLLM_TENSOR_PARALLEL_SIZE` – tensor parallelism when multiple GPUs are available.
    - `VLLM_TRUST_REMOTE_CODE` – set to `true` if the model requires it.
    - `BACKEND_ALLOW_ORIGINS` – comma-separated list of permitted CORS origins (defaults to `*`).

@@ -27,7 +27,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8001
 Environment variables you can set before running:
 
 - `VLLM_MODEL` – overrides the default model path/name (`Qwen/Qwen3-4B`).
-- `VLLM_MAX_TOKENS` – default `max_tokens` value for generation requests (defaults to 512).
+- `VLLM_MAX_TOKENS` – default `max_tokens` value for generation requests (defaults to 1024).
+- `VLLM_FREQUENCY_PENALTY` – default repetition penalty applied to generations (defaults to 0.5).
 - `VLLM_TENSOR_PARALLEL_SIZE` – sets tensor parallelism when multiple GPUs are available.
 - `VLLM_TRUST_REMOTE_CODE` – set to `true` if the selected model requires trusted code.
 - `BACKEND_ALLOW_ORIGINS` – comma-separated list of allowed CORS origins (defaults to `*`).
