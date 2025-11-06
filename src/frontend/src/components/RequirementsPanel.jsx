@@ -9,6 +9,24 @@ export default function RequirementsPanel({
   const hasSummaries = Boolean(plan?.summaries && Object.keys(plan.summaries).length > 0);
   const hasDocument = Boolean(plan?.requirementsDocument);
 
+  const handleDownload = () => {
+    if (!hasDocument) {
+      return;
+    }
+    const timestamp = plan?.updatedAt ? new Date(plan.updatedAt).toISOString().replace(/[:.]/g, '-') : 'latest';
+    const filename = `requirements-plan-${timestamp}.txt`;
+    const blob = new Blob([plan.requirementsDocument], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="requirements-panel">
       <header className="requirements-header">
@@ -55,6 +73,9 @@ export default function RequirementsPanel({
                     disabled={generating}
                   >
                     {generating ? 'Generating…' : 'Regenerate Document'}
+                  </button>
+                  <button type="button" onClick={handleDownload}>
+                    Download
                   </button>
                 </div>
                 <pre className="requirements-document">{plan.requirementsDocument}</pre>
