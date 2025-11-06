@@ -369,6 +369,11 @@ button.secondary {
   font-size: 1rem;
 }
 
+.requirements-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .requirements-summaries {
   list-style: none;
   margin: 0;
@@ -408,6 +413,26 @@ button.secondary {
   font-size: 0.9rem;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.requirements-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px dashed rgba(99, 102, 241, 0.5);
+  background: rgba(224, 242, 254, 0.4);
+  color: #1e3a8a;
+}
+
+.requirements-empty p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.requirements-empty button {
+  align-self: flex-start;
 }
 
 @media (max-width: 640px) {

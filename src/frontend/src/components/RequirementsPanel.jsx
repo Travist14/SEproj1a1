@@ -1,5 +1,13 @@
-export default function RequirementsPanel({ plan, loading, error, onRefresh }) {
-  const hasPlan = Boolean(plan?.requirementsDocument);
+export default function RequirementsPanel({
+  plan,
+  loading,
+  error,
+  onRefresh,
+  onGenerate,
+  generating
+}) {
+  const hasSummaries = Boolean(plan?.summaries && Object.keys(plan.summaries).length > 0);
+  const hasDocument = Boolean(plan?.requirementsDocument);
 
   return (
     <div className="requirements-panel">
@@ -17,12 +25,12 @@ export default function RequirementsPanel({ plan, loading, error, onRefresh }) {
         </button>
       </header>
 
-      {loading && !hasPlan ? <p className="requirements-status">Loading orchestrator plan…</p> : null}
+      {loading && !hasSummaries ? <p className="requirements-status">Loading orchestration summaries…</p> : null}
       {error ? (
         <p className="requirements-status requirements-error">Failed to load plan: {error.message}</p>
       ) : null}
 
-      {hasPlan ? (
+      {hasSummaries ? (
         <>
           <section className="requirements-section">
             <h3>Stakeholder Summaries</h3>
@@ -37,7 +45,31 @@ export default function RequirementsPanel({ plan, loading, error, onRefresh }) {
           </section>
           <section className="requirements-section">
             <h3>Requirements Engineering Document</h3>
-            <pre className="requirements-document">{plan.requirementsDocument}</pre>
+            {hasDocument ? (
+              <>
+                <div className="requirements-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={onGenerate}
+                    disabled={generating}
+                  >
+                    {generating ? 'Generating…' : 'Regenerate Document'}
+                  </button>
+                </div>
+                <pre className="requirements-document">{plan.requirementsDocument}</pre>
+              </>
+            ) : (
+              <div className="requirements-empty">
+                <p>
+                  The requirements document has not been generated yet. Click the button below to compile it from the
+                  latest stakeholder summaries.
+                </p>
+                <button type="button" onClick={onGenerate} disabled={generating || loading}>
+                  {generating ? 'Generating…' : 'Generate Requirements Document'}
+                </button>
+              </div>
+            )}
           </section>
         </>
       ) : !loading && !error ? (
