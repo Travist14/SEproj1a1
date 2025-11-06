@@ -142,6 +142,7 @@ body {
 .chat-section {
   flex: 2;
   min-width: 0;
+  display: flex;
 }
 
 .plan-section {
