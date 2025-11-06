@@ -8,6 +8,46 @@
 
 ---
 
+## 📚 Documentation
+
+**[View Full Documentation](./site/index.html)** | **[Browse Online](./docs/index.md)**
+
+Comprehensive documentation is available in the `site/` directory. Open `site/index.html` in your browser to access:
+
+- **[Getting Started](./site/getting-started/installation.html)** - Installation and quick start guide
+- **[Architecture](./site/architecture/overview.html)** - System design and components
+- **[API Reference](./site/api/rest-api.html)** - Complete REST API documentation
+- **[User Guide](./site/guide/personas.html)** - Using personas and generating requirements
+- **[Development](./site/development/contributing.html)** - Contributing guidelines and code standards
+
+### Quick Documentation Links
+
+| Topic | Description | Link |
+|-------|-------------|------|
+| Installation | Get MARC up and running | [Installation Guide](./site/getting-started/installation.html) |
+| Quick Start | Your first requirement in 5 minutes | [Quick Start](./site/getting-started/quickstart.html) |
+| REST API | Complete API reference | [API Docs](./site/api/rest-api.html) |
+| Personas | Using different stakeholder perspectives | [Personas Guide](./site/guide/personas.html) |
+| Testing | Running and writing tests | [Testing Guide](./site/guide/testing.html) |
+| Contributing | How to contribute | [Contributing](./site/development/contributing.html) |
+
+### Building Documentation
+
+To rebuild the documentation:
+
+```bash
+# Install MkDocs
+pip install mkdocs mkdocs-material pymdown-extensions mkdocstrings mkdocstrings-python
+
+# Build documentation
+mkdocs build
+
+# Serve documentation locally
+mkdocs serve  # Access at http://localhost:8000
+```
+
+---
+
 ## Overview
 
 **MARC** (Multi-Agent Requirement Collaboration) is an AI-powered framework for collaborative Requirements Engineering that leverages multiple LLM-based agents to gather, analyze, and synthesize software requirements from diverse stakeholder perspectives. Built on IEEE 29148 standards, MARC enables teams to create comprehensive, unambiguous, and testable requirements documentation through intelligent multi-agent collaboration.
