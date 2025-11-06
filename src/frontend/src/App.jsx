@@ -2,13 +2,23 @@ import { useState } from 'react';
 import ChatWindow from './components/ChatWindow.jsx';
 import MessageInput from './components/MessageInput.jsx';
 import Login from './components/Login.jsx';
+import RequirementsPanel from './components/RequirementsPanel.jsx';
 import { useChat } from './hooks/useChat.js';
+import { useOrchestratorPlan } from './hooks/useOrchestratorPlan.js';
 import { PERSONAS, getPersonaConfig } from './config/personas.js';
 
 export default function App() {
   const [personaKey, setPersonaKey] = useState(null);
   const activePersona = getPersonaConfig(personaKey ?? 'developer');
   const { messages, sendMessage, cancel, reset, status } = useChat(activePersona.key);
+  const {
+    plan: orchestratorPlan,
+    loading: planLoading,
+    error: planError,
+    refresh: refreshPlan,
+    generateRequirements,
+    generating: generatingRequirements
+  } = useOrchestratorPlan(status);
 
   if (!personaKey) {
     return (
@@ -41,7 +51,19 @@ export default function App() {
         </div>
       </header>
       <main className="app-main">
-        <ChatWindow messages={messages} />
+        <section className="chat-section">
+          <ChatWindow messages={messages} />
+        </section>
+        <aside className="plan-section">
+          <RequirementsPanel
+            plan={orchestratorPlan}
+            loading={planLoading}
+            error={planError}
+            onRefresh={refreshPlan}
+            onGenerate={generateRequirements}
+            generating={generatingRequirements}
+          />
+        </aside>
       </main>
       <footer className="app-footer">
         <MessageInput

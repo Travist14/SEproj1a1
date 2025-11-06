@@ -1,6 +1,8 @@
 const API_BASE_URL = import.meta.env.VITE_BACKEND_API_BASE?.replace(/\/+$/, '') ?? '/api';
 const GENERATE_ROUTE = `${API_BASE_URL}/generate`;
 const HEALTH_ROUTE = `${API_BASE_URL}/health`;
+const ORCHESTRATE_ROUTE = `${API_BASE_URL}/orchestrate`;
+const ORCHESTRATOR_STATE_ROUTE = `${API_BASE_URL}/orchestrator/state`;
 
 function parseEventLine(line) {
   if (!line) {
@@ -199,4 +201,43 @@ export async function generateCompletion(messages, { signal, persona, stream = f
 export async function pingBackend() {
   const response = await fetch(HEALTH_ROUTE);
   return response.ok;
+}
+
+export async function fetchOrchestratorState() {
+  const response = await fetch(ORCHESTRATOR_STATE_ROUTE);
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Failed to load orchestrator state (status ${response.status})`);
+  }
+
+  const payload = await response.json();
+  return {
+    updatedAt: payload.updated_at ?? null,
+    summaries: payload.summaries ?? {},
+    requirementsDocument: payload.requirements_document ?? ''
+  };
+}
+
+export async function runOrchestrator(request = {}) {
+  const response = await fetch(ORCHESTRATE_ROUTE, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(request)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to run orchestrator (status ${response.status})`);
+  }
+
+  const payload = await response.json();
+  return {
+    summaries: payload.summaries ?? {},
+    requirementsDocument: payload.requirements_document ?? ''
+  };
 }
