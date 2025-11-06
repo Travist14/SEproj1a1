@@ -98,8 +98,20 @@ async def test_iterate_generation_with_mocked_engine(monkeypatch):
     # Patch the global engine_manager.get_engine to return our mock
     monkeypatch.setattr(app_main.engine_manager, "get_engine", AsyncMock(return_value=mock_engine))
 
+    # Create test data
+    messages = [ChatMessage(role="user", content="Hello")]
+    persona = "developer"  # or None if the function accepts None
+    generation_parameters = GenerateRequest(messages=messages)
+
     chunks = []
-    async for raw in app_main.iterate_generation("prompt", None, "req123"):
+    async for raw in app_main.iterate_generation(
+        messages=messages,
+        persona=persona,
+        generation_parameters=generation_parameters,
+        request_id = 'req-123',
+        prompt = 'prompt',
+        sampling_params = None
+    ):
         chunks.append(json.loads(raw.decode("utf-8")))
 
     # Expect at least one token chunk and one done message
