@@ -17,15 +17,15 @@ https://github.com/user-attachments/assets/82acc0ef-0424-4d80-8635-6f742d9fed0f
 
 ## 📚 Documentation
 
-**[View Full Documentation](./docs/index.html)** | **[Browse Online](./docs/index.md)**
+**[View Full Documentation](./docs/index.md)**
 
 Comprehensive documentation is available in the `site/` directory. Open `site/index.html` in your browser to access:
 
-- **[Getting Started](./docs/getting-started/installation.html)** - Installation and quick start guide
-- **[Architecture](./docs/architecture/overview.html)** - System design and components
-- **[API Reference](./docs/api/rest-api.html)** - Complete REST API documentation
-- **[User Guide](./docs/guide/personas.html)** - Using personas and generating requirements
-- **[Development](./docs/development/contributing.html)** - Contributing guidelines and code standards
+- **[Getting Started](./docs/getting-started/installation.md)** - Installation and quick start guide
+- **[Architecture](./docs/architecture/overview.md)** - System design and components
+- **[API Reference](./docs/api/rest-api.md)** - Complete REST API documentation
+- **[User Guide](./docs/guide/personas.md)** - Using personas and generating requirements
+- **[Development](./docs/development/contributing.md)** - Contributing guidelines and code standards
 
 ### Quick Documentation Links
 
