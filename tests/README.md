@@ -2,6 +2,9 @@
 
 This directory contains the testing apparatus for the MARC (Multi-Agent Requirement Collaboration) system.
 
+https://github.com/user-attachments/assets/10c1f986-cff5-4606-a04a-aca7b050a6e3
+
+
 ## Overview
 
 MARC is a framework for collaborative, LLM-powered Requirements Engineering documentation through multi-agent collaboration. The testing suite validates:
