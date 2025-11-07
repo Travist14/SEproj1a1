@@ -17,26 +17,26 @@ https://github.com/user-attachments/assets/82acc0ef-0424-4d80-8635-6f742d9fed0f
 
 ## 📚 Documentation
 
-**[View Full Documentation](./site/index.html)** | **[Browse Online](./docs/index.md)**
+**[View Full Documentation](./docs/index.html)** | **[Browse Online](./docs/index.md)**
 
 Comprehensive documentation is available in the `site/` directory. Open `site/index.html` in your browser to access:
 
-- **[Getting Started](./site/getting-started/installation.html)** - Installation and quick start guide
-- **[Architecture](./site/architecture/overview.html)** - System design and components
-- **[API Reference](./site/api/rest-api.html)** - Complete REST API documentation
-- **[User Guide](./site/guide/personas.html)** - Using personas and generating requirements
-- **[Development](./site/development/contributing.html)** - Contributing guidelines and code standards
+- **[Getting Started](./docs/getting-started/installation.html)** - Installation and quick start guide
+- **[Architecture](./docs/architecture/overview.html)** - System design and components
+- **[API Reference](./docs/api/rest-api.html)** - Complete REST API documentation
+- **[User Guide](./docs/guide/personas.html)** - Using personas and generating requirements
+- **[Development](./docs/development/contributing.html)** - Contributing guidelines and code standards
 
 ### Quick Documentation Links
 
 | Topic | Description | Link |
 |-------|-------------|------|
-| Installation | Get MARC up and running | [Installation Guide](./site/getting-started/installation.html) |
-| Quick Start | Your first requirement in 5 minutes | [Quick Start](./site/getting-started/quickstart.html) |
-| REST API | Complete API reference | [API Docs](./site/api/rest-api.html) |
-| Personas | Using different stakeholder perspectives | [Personas Guide](./site/guide/personas.html) |
-| Testing | Running and writing tests | [Testing Guide](./site/guide/testing.html) |
-| Contributing | How to contribute | [Contributing](./site/development/contributing.html) |
+| Installation | Get MARC up and running | [Installation Guide](./docs/getting-started/installation.html) |
+| Quick Start | Your first requirement in 5 minutes | [Quick Start](./docs/getting-started/quickstart.html) |
+| REST API | Complete API reference | [API Docs](./docs/api/rest-api.html) |
+| Personas | Using different stakeholder perspectives | [Personas Guide](./docs/guide/personas.html) |
+| Testing | Running and writing tests | [Testing Guide](./docs/guide/testing.html) |
+| Contributing | How to contribute | [Contributing](./docs/development/contributing.html) |
 
 ### Building Documentation
 
